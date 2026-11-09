@@ -55,3 +55,5 @@ export function stageOf(statusName: string): Stage {
 export const STUCK_DAYS = 30;
 // How many past weeks the "finished per week" chart shows (current week included).
 export const WEEKS = 8;
+// How far back finished tasks are brought in for the task list and people's activity.
+export const HISTORY_DAYS = 90;

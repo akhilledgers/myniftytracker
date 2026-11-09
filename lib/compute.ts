@@ -1,6 +1,7 @@
 import {
   ACTIVE_STAGES,
   CUSTOM_FIELDS,
+  HISTORY_DAYS,
   LIST_NAME_PATTERN,
   SOP_STATUSES,
   STAGES,
@@ -19,7 +20,8 @@ const shortFmt = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: 'numer
 /** Calendar date (YYYY-MM-DD) in India time. */
 export const localDate = (d: Date | string) => dateFmt.format(typeof d === 'string' ? new Date(d) : d);
 const dayNum = (ymd: string) => Date.parse(ymd + 'T00:00:00Z') / DAY;
-const short = (ymd: string) => shortFmt.format(new Date(ymd + 'T00:00:00Z'));
+const ymdOf = (n: number) => new Date(n * DAY).toISOString().slice(0, 10);
+export const shortDate = (ymd: string | null) => (ymd ? shortFmt.format(new Date(ymd + 'T00:00:00Z')) : '—');
 const ago = (days: number) => (days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days} days ago`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -30,11 +32,24 @@ export function mondayOf(ymd: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** First day the "finished" query needs: Monday of the oldest week shown. */
+/** First day the "finished" query needs: the oldest of the weekly chart and the finished-task history. */
 export function sinceDate(today: string): string {
-  const d = new Date(mondayOf(today) + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() - 7 * (WEEKS - 1));
-  return d.toISOString().slice(0, 10);
+  const chart = dayNum(mondayOf(today)) - 7 * (WEEKS - 1);
+  return ymdOf(Math.min(chart, dayNum(today) - HISTORY_DAYS));
+}
+
+/** Removes HTML tags pasted into titles (e.g. Grammarly's <gwmw>) and decodes common entities. Leaves text like "<class 'int'>" alone. */
+export function cleanText(s: string): string {
+  return s
+    .replace(/<\/?[a-z][a-z0-9-]*(\s+[a-z-]+(\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?)*\s*\/?>/gi, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export const RULES = [
@@ -59,13 +74,31 @@ export interface TaskRow {
   key: string;
   name: string;
   url: string;
+  done: boolean;
+  doneDay: string | null;
   stage: Stage;
   status: string;
+  list: string;
   owner: string;
   who: string[];
   assignees: string;
+  lead: string;
+  tester: string;
+  developer: string;
+  /** Everyone tied to the task: assignees, team lead, tester, developer. */
+  people: string[];
+  taskType: string;
+  priority: string;
+  country: string;
+  plannedMonth: string;
+  planned: string;
+  labels: string[];
+  start: string | null;
   due: string | null;
   dueLabel: string;
+  created: string;
+  estimate: string;
+  subtask: boolean;
   late: number;
   idle: number;
   agoLabel: string;
@@ -76,6 +109,134 @@ export interface TaskRow {
 export interface DashboardData {
   generatedAt: string;
   today: string;
+  historyDays: number;
+  rows: TaskRow[];
+}
+
+const present = (v: unknown) =>
+  v !== null && v !== undefined && !(typeof v === 'string' && v.trim() === '') && !(Array.isArray(v) && v.length === 0);
+
+const str = (v: unknown) => (present(v) ? String(v).trim() : '');
+
+function hours(minutes: number | null): string {
+  if (!minutes) return '';
+  const h = minutes / 60;
+  return `${Number.isInteger(h) ? h : h.toFixed(1)} h`;
+}
+
+/** "2026 11 November" / "2026 11" → "Nov 2026". */
+function monthLabel(v: string): string {
+  const m = /^(\d{4})\s*[-/ ]\s*(\d{1,2})/.exec(v);
+  if (!m) return v;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+export function buildDashboard(
+  input: { open: NiftyTask[]; done: NiftyTask[]; statuses: NiftyNamed[]; lists: NiftyNamed[]; members?: NiftyNamed[] },
+  now = new Date(),
+): DashboardData {
+  const today = localDate(now);
+  const t0 = dayNum(today);
+  const statusName = new Map(input.statuses.map((s) => [s.id, s.name]));
+  const listName = new Map(input.lists.map((l) => [l.id, l.name]));
+  const sopStatuses = new Set(SOP_STATUSES.map((s) => s.toLowerCase()));
+
+  // Member ids → names: from the members list if the token can read it, else from everyone seen as an assignee.
+  const memberName = new Map((input.members || []).filter((m) => m && m.id && m.name).map((m) => [m.id, m.name]));
+  for (const t of [...input.open, ...input.done]) for (const p of t.assignees || []) if (!memberName.has(p.id)) memberName.set(p.id, p.name);
+  const names = (v: unknown) =>
+    str(v)
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => memberName.get(id) || 'Unknown person');
+
+  const rows: TaskRow[] = [];
+  const add = (t: NiftyTask, done: boolean) => {
+    const status = (t.statusId && statusName.get(t.statusId)) || t.status?.name || '';
+    const stage = stageOf(status);
+    if (stage === 'Cancelled') return;
+
+    const list = (t.listId && listName.get(t.listId)) || t.list?.name || '';
+    const owner = list.split('-').map((p) => p.trim())[1] || 'No list';
+    const assigned = t.assignees || [];
+    const who = assigned.length ? assigned.map((p) => p.name) : ['Unassigned'];
+    const cf = new Map((t.customFields || []).map((c) => [c.customFieldId, c.value]));
+    const labels = (t.labels || []).map((l) => l.name);
+    const priorityTag = labels.find((l) => /priority/i.test(l)) || '';
+    const lead = names(cf.get(CUSTOM_FIELDS.teamLead));
+    const tester = names(cf.get(CUSTOM_FIELDS.tester));
+    const developer = names(cf.get(CUSTOM_FIELDS.developer));
+    const doneDay = done && t.completedAt ? localDate(t.completedAt) : null;
+    const due = t.dueAt ? localDate(t.dueAt) : null;
+    const late = !done && due && due < today ? t0 - dayNum(due) : 0;
+    const idle = Math.max(0, t0 - dayNum(doneDay || localDate(t.updatedAt)));
+
+    const issues: RuleId[] = [];
+    if (!done) {
+      if (!sopStatuses.has(status.toLowerCase())) issues.push('status');
+      if (!LIST_NAME_PATTERN.test(list)) issues.push('list');
+      if (stage !== 'Pipeline') {
+        const leadId = cf.get(CUSTOM_FIELDS.teamLead);
+        if (assigned.length !== 2) issues.push('assignees');
+        if (present(leadId) && !assigned.some((p) => p.id === leadId)) issues.push('leadAssigned');
+        if (!present(leadId)) issues.push('teamLead');
+        if (!t.startAt) issues.push('start');
+        if (!t.dueAt) issues.push('due');
+        if (!t.estimate) issues.push('estimate');
+        if (!present(cf.get(CUSTOM_FIELDS.plannedMonth))) issues.push('plannedMonth');
+        if (!present(cf.get(CUSTOM_FIELDS.plannedUnplanned))) issues.push('plannedUnplanned');
+        if (!present(cf.get(CUSTOM_FIELDS.taskType))) issues.push('taskType');
+        if (!developer.length) issues.push('developer');
+        if (!tester.length) issues.push('tester');
+        if (!priorityTag && !present(cf.get(CUSTOM_FIELDS.priority))) issues.push('priority');
+      }
+    }
+
+    rows.push({
+      key: t.identifier,
+      name: cleanText(t.name) || t.identifier,
+      url: t.url,
+      done,
+      doneDay,
+      stage,
+      status: status || 'No status',
+      list: list || 'No list',
+      owner,
+      who,
+      assignees: assigned.length ? assigned.map((p) => p.name).join(', ') : 'Unassigned',
+      lead: lead.join(', '),
+      tester: tester.join(', '),
+      developer: developer.join(', '),
+      people: [...new Set([...who, ...lead, ...tester, ...developer])],
+      taskType: str(cf.get(CUSTOM_FIELDS.taskType)),
+      priority: (str(cf.get(CUSTOM_FIELDS.priority)) || priorityTag).replace(/\s*priority$/i, ''),
+      country: str(cf.get(CUSTOM_FIELDS.country)) || (/^(IN|AE|US|GL)\b/.exec(list)?.[1] ?? ''),
+      plannedMonth: monthLabel(str(cf.get(CUSTOM_FIELDS.plannedMonth))),
+      planned: str(cf.get(CUSTOM_FIELDS.plannedUnplanned)),
+      labels,
+      start: t.startAt ? localDate(t.startAt) : null,
+      due,
+      dueLabel: done ? shortDate(due) : late ? `${plural(late, 'day')} overdue` : shortDate(due),
+      created: localDate(t.createdAt),
+      estimate: hours(t.estimate),
+      subtask: !!t.parentTaskId,
+      late,
+      idle,
+      agoLabel: ago(idle),
+      active: !done && ACTIVE_STAGES.includes(stage),
+      issues,
+    });
+  };
+  for (const t of input.open) add(t, false);
+  for (const t of input.done) if (t.completedAt) add(t, true);
+
+  return { generatedAt: now.toISOString(), today, historyDays: HISTORY_DAYS, rows };
+}
+
+// ---------- Summaries. Pure, so the browser can re-run them on whatever the filters leave. ----------
+
+export interface Summary {
   summary: { open: number; overdue: number; stuck: number; done7: number };
   stages: { stage: string; n: number }[];
   owners: { owner: string; open: number; overdue: number }[];
@@ -90,9 +251,7 @@ export interface DashboardData {
     lastLabel: string;
     nowKey: string | null;
     nowName: string;
-    nowUrl: string | null;
   }[];
-  tasks: TaskRow[];
   sop: {
     total: number;
     checked: number;
@@ -102,116 +261,49 @@ export interface DashboardData {
   };
 }
 
-const present = (v: unknown) =>
-  v !== null && v !== undefined && !(typeof v === 'string' && v.trim() === '') && !(Array.isArray(v) && v.length === 0);
+export const isStuck = (r: TaskRow) => !r.done && r.idle >= STUCK_DAYS;
 
-export function buildDashboard(
-  input: { open: NiftyTask[]; done: NiftyTask[]; statuses: NiftyNamed[]; lists: NiftyNamed[] },
-  now = new Date(),
-): DashboardData {
-  const today = localDate(now);
+export function summarize(rows: TaskRow[], today: string): Summary {
   const t0 = dayNum(today);
-  const statusName = new Map(input.statuses.map((s) => [s.id, s.name]));
-  const listName = new Map(input.lists.map((l) => [l.id, l.name]));
-  const sopStatuses = new Set(SOP_STATUSES.map((s) => s.toLowerCase()));
+  const weekAgo = ymdOf(t0 - 7);
+  const open = rows.filter((r) => !r.done);
+  const done = rows.filter((r) => r.done && r.doneDay) as (TaskRow & { doneDay: string })[];
 
-  const tasks: TaskRow[] = [];
-  for (const t of input.open) {
-    const status = (t.statusId && statusName.get(t.statusId)) || '';
-    const stage = stageOf(status);
-    if (stage === 'Cancelled') continue;
-
-    const list = (t.listId && listName.get(t.listId)) || '';
-    const owner = list.split('-').map((p) => p.trim())[1] || 'No list';
-    const people = t.assignees || [];
-    const who = people.length ? people.map((p) => p.name) : ['Unassigned'];
-    const due = t.dueAt ? localDate(t.dueAt) : null;
-    const late = due && due < today ? t0 - dayNum(due) : 0;
-    const idle = Math.max(0, t0 - dayNum(localDate(t.updatedAt)));
-    const cf = new Map((t.customFields || []).map((c) => [c.customFieldId, c.value]));
-    const hasPriorityTag = (t.labels || []).some((l) => /priority/i.test(l.name));
-
-    const issues: RuleId[] = [];
-    if (!sopStatuses.has(status.toLowerCase())) issues.push('status');
-    if (!LIST_NAME_PATTERN.test(list)) issues.push('list');
-    if (stage !== 'Pipeline') {
-      const lead = cf.get(CUSTOM_FIELDS.teamLead);
-      if (people.length !== 2) issues.push('assignees');
-      if (present(lead) && !people.some((p) => p.id === lead)) issues.push('leadAssigned');
-      if (!present(lead)) issues.push('teamLead');
-      if (!t.startAt) issues.push('start');
-      if (!t.dueAt) issues.push('due');
-      if (!t.estimate) issues.push('estimate');
-      if (!present(cf.get(CUSTOM_FIELDS.plannedMonth))) issues.push('plannedMonth');
-      if (!present(cf.get(CUSTOM_FIELDS.plannedUnplanned))) issues.push('plannedUnplanned');
-      if (!present(cf.get(CUSTOM_FIELDS.taskType))) issues.push('taskType');
-      if (!present(cf.get(CUSTOM_FIELDS.developer))) issues.push('developer');
-      if (!present(cf.get(CUSTOM_FIELDS.tester))) issues.push('tester');
-      if (!hasPriorityTag && !present(cf.get(CUSTOM_FIELDS.priority))) issues.push('priority');
-    }
-
-    tasks.push({
-      key: t.identifier,
-      name: t.name,
-      url: t.url,
-      stage,
-      status: status || 'No status',
-      owner,
-      who,
-      assignees: people.length ? people.map((p) => p.name).join(', ') : 'Unassigned',
-      due,
-      dueLabel: late ? `${plural(late, 'day')} overdue` : due ? short(due) : '—',
-      late,
-      idle,
-      agoLabel: ago(idle),
-      active: ACTIVE_STAGES.includes(stage),
-      issues,
-    });
-  }
-
-  const done = input.done
-    .filter((t) => t.completedAt)
-    .map((t) => ({ day: localDate(t.completedAt as string), who: (t.assignees || []).map((p) => p.name) }));
-  const weekAgo = new Date((t0 - 7) * DAY).toISOString().slice(0, 10);
-
-  // Weekly finished counts, Monday-start weeks.
   const thisMonday = mondayOf(today);
   const weekly = Array.from({ length: WEEKS }, (_, i) => {
-    const start = new Date((dayNum(thisMonday) - 7 * (WEEKS - 1 - i)) * DAY).toISOString().slice(0, 10);
-    const end = new Date((dayNum(start) + 7) * DAY).toISOString().slice(0, 10);
-    return { week: start, label: short(start), n: done.filter((d) => d.day >= start && d.day < end).length, current: start === thisMonday };
+    const start = ymdOf(dayNum(thisMonday) - 7 * (WEEKS - 1 - i));
+    const end = ymdOf(dayNum(start) + 7);
+    return { week: start, label: shortDate(start), n: done.filter((d) => d.doneDay >= start && d.doneDay < end).length, current: start === thisMonday };
   });
 
-  const stages = STAGES.map((stage) => ({ stage, n: tasks.filter((r) => r.stage === stage).length })).filter(
+  const stages = STAGES.map((stage) => ({ stage, n: open.filter((r) => r.stage === stage).length })).filter(
     (d) => d.n > 0 || d.stage !== 'No status',
   );
 
   const ownerMap = new Map<string, { owner: string; open: number; overdue: number }>();
-  for (const r of tasks) {
+  for (const r of open) {
     const o = ownerMap.get(r.owner) || { owner: r.owner, open: 0, overdue: 0 };
     o.open++;
     if (r.late) o.overdue++;
     ownerMap.set(r.owner, o);
   }
-  const owners = [...ownerMap.values()].sort((a, b) => b.open - a.open);
 
-  const attention = tasks
-    .filter((r) => r.late > 0 || r.idle >= STUCK_DAYS)
+  const attention = open
+    .filter((r) => r.late > 0 || isStuck(r))
     .sort((a, b) => b.late - a.late || b.idle - a.idle)
     .map((r) => ({ ...r, reason: r.late ? `${plural(r.late, 'day')} overdue` : `No update for ${r.idle} days` }));
 
-  // People
-  type P = DashboardData['people'][number] & { last: number; nowIdle: number };
+  type P = Summary['people'][number] & { last: number; nowIdle: number };
   const pm = new Map<string, P>();
   const getP = (name: string) => {
     let p = pm.get(name);
     if (!p) {
-      p = { person: name, open: 0, active: 0, overdue: 0, done7: 0, lastLabel: '—', nowKey: null, nowName: 'No open tasks', nowUrl: null, last: -Infinity, nowIdle: Infinity };
+      p = { person: name, open: 0, active: 0, overdue: 0, done7: 0, lastLabel: '—', nowKey: null, nowName: 'No open tasks', last: -Infinity, nowIdle: Infinity };
       pm.set(name, p);
     }
     return p;
   };
-  for (const r of tasks) {
+  for (const r of open) {
     for (const name of r.who) {
       const p = getP(name);
       p.open++;
@@ -222,15 +314,15 @@ export function buildDashboard(
         p.nowIdle = r.idle;
         p.nowKey = r.key;
         p.nowName = r.name;
-        p.nowUrl = r.url;
       }
     }
   }
   for (const d of done) {
     for (const name of d.who) {
+      if (name === 'Unassigned') continue;
       const p = getP(name);
-      if (d.day >= weekAgo) p.done7++;
-      p.last = Math.max(p.last, dayNum(d.day));
+      if (d.doneDay >= weekAgo) p.done7++;
+      p.last = Math.max(p.last, dayNum(d.doneDay));
     }
   }
   const people = [...pm.values()]
@@ -239,20 +331,19 @@ export function buildDashboard(
       (a, b) =>
         Number(a.person === 'Unassigned') - Number(b.person === 'Unassigned') ||
         b.open - a.open ||
-        b.active - a.active ||
+        b.done7 - a.done7 ||
         a.person.localeCompare(b.person),
     );
 
-  // SOP health
-  const checkedRows = tasks.filter((r) => r.stage !== 'Pipeline');
+  const checkedRows = open.filter((r) => r.stage !== 'Pipeline');
   const rules = RULES.map((rule) => ({
     id: rule.id,
     label: rule.label,
-    n: tasks.filter((r) => r.issues.includes(rule.id)).length,
-    of: rule.scope === 'all' ? tasks.length : checkedRows.length,
+    n: open.filter((r) => r.issues.includes(rule.id)).length,
+    of: rule.scope === 'all' ? open.length : checkedRows.length,
   }));
   const leadMap = new Map<string, { owner: string; tasks: number; withIssues: number; issues: number }>();
-  for (const r of tasks) {
+  for (const r of open) {
     const l = leadMap.get(r.owner) || { owner: r.owner, tasks: 0, withIssues: 0, issues: 0 };
     l.tasks++;
     if (r.issues.length) l.withIssues++;
@@ -261,24 +352,21 @@ export function buildDashboard(
   }
 
   return {
-    generatedAt: now.toISOString(),
-    today,
     summary: {
-      open: tasks.length,
-      overdue: tasks.filter((r) => r.late > 0).length,
-      stuck: tasks.filter((r) => r.idle >= STUCK_DAYS).length,
-      done7: done.filter((d) => d.day >= weekAgo).length,
+      open: open.length,
+      overdue: open.filter((r) => r.late > 0).length,
+      stuck: open.filter(isStuck).length,
+      done7: done.filter((d) => d.doneDay >= weekAgo).length,
     },
     stages,
-    owners,
+    owners: [...ownerMap.values()].sort((a, b) => b.open - a.open),
     weekly,
     attention,
     people,
-    tasks,
     sop: {
-      total: tasks.length,
+      total: open.length,
       checked: checkedRows.length,
-      clean: tasks.filter((r) => r.issues.length === 0).length,
+      clean: open.filter((r) => r.issues.length === 0).length,
       rules,
       leads: [...leadMap.values()].sort((a, b) => b.withIssues - a.withIssues || b.tasks - a.tasks),
     },

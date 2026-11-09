@@ -32,6 +32,8 @@ export interface NiftyTask {
   assignees?: NiftyPerson[];
   labels?: { id: string; name: string }[];
   customFields?: { customFieldId: string; value: unknown }[];
+  status?: { name: string } | null;
+  list?: { name: string } | null;
 }
 
 export interface NiftyNamed {
@@ -86,6 +88,7 @@ export async function loadNifty(sinceDate: string) {
       done: NiftyTask[];
       statuses: NiftyNamed[];
       lists: NiftyNamed[];
+      members?: NiftyNamed[];
     };
   }
   const project = projectId();
@@ -103,10 +106,12 @@ export async function loadNifty(sinceDate: string) {
       'archived[eq]': 'false',
       'completedAt[gte]': sinceDate,
       sort: '-completedAt',
-      expand: 'assignees',
+      expand: 'assignees,labels,customFields',
     }),
     getAll<NiftyNamed>('/statuses', { projectId: project }),
     getAll<NiftyNamed>('/lists', { projectId: project }),
   ]);
-  return { open, done, statuses, lists };
+  // Names for Team Lead / Tester / Developer fields. Optional: needs the members:read scope.
+  const members = await getAll<NiftyNamed>('/members', {}, 5).catch(() => [] as NiftyNamed[]);
+  return { open, done, statuses, lists, members };
 }
