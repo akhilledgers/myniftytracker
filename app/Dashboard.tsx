@@ -239,13 +239,36 @@ function FilterBar({
   );
 }
 
+const AUTO_REFRESH_MS = 30 * 60 * 1000;
+
 function RefreshButton({ generatedAt }: { generatedAt: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   useEffect(() => setBusy(false), [generatedAt]);
+
+  // Auto refresh every 30 minutes. A hidden tab catches up as soon as it is looked at again.
+  useEffect(() => {
+    let last = Date.now();
+    const refresh = () => {
+      last = Date.now();
+      router.refresh();
+    };
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, AUTO_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - last >= AUTO_REFRESH_MS) refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [router]);
+
   return (
     <div className="refresh">
-      <span>Updated {timeFmt.format(new Date(generatedAt))}</span>
+      <span title="Refreshes by itself every 30 minutes">Updated {timeFmt.format(new Date(generatedAt))} · auto every 30 min</span>
       <button
         className="btn"
         disabled={busy}
@@ -257,6 +280,37 @@ function RefreshButton({ generatedAt }: { generatedAt: string }) {
       >
         {busy ? 'Refreshing…' : 'Refresh'}
       </button>
+      <ThemeToggle />
+    </div>
+  );
+}
+
+type Theme = 'auto' | 'light' | 'dark';
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>('auto');
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem('theme');
+      if (t === 'light' || t === 'dark') setTheme(t);
+    } catch {}
+  }, []);
+  const pick = (t: Theme) => {
+    setTheme(t);
+    if (t === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+    try {
+      if (t === 'auto') localStorage.removeItem('theme');
+      else localStorage.setItem('theme', t);
+    } catch {}
+  };
+  return (
+    <div className="theme" role="group" aria-label="Colour theme">
+      {(['auto', 'light', 'dark'] as Theme[]).map((t) => (
+        <button key={t} aria-pressed={theme === t} onClick={() => pick(t)} title={t === 'auto' ? 'Follow this device' : undefined}>
+          {t === 'auto' ? 'Auto' : t === 'light' ? 'Light' : 'Dark'}
+        </button>
+      ))}
     </div>
   );
 }

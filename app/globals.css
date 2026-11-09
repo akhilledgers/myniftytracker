@@ -16,8 +16,9 @@
   --radius: 8px;
   color-scheme: light;
 }
+/* Dark: follows the device unless the toggle picked light or dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0f1115;
     --panel: #171a21;
     --line: #2a2f39;
@@ -31,6 +32,20 @@
     --hover: #1e222b;
     color-scheme: dark;
   }
+}
+:root[data-theme='dark'] {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #2a2f39;
+  --fg: #e8eaef;
+  --muted: #9aa1ae;
+  --accent: #7c9dff;
+  --accent-soft: #24304d;
+  --muted-bar: #4a5160;
+  --bad: #ff7a6e;
+  --ok: #6fcf97;
+  --hover: #1e222b;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -64,7 +79,12 @@ button { font: inherit; }
 .ok { color: var(--ok); }
 .muted { color: var(--muted); }
 
-.refresh { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.refresh { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.theme { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.theme button { border: 0; background: var(--panel); color: var(--muted); padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.theme button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .btn {
   border: 1px solid var(--line); background: var(--panel); color: var(--fg);
   border-radius: 6px; padding: 4px 12px; cursor: pointer;
