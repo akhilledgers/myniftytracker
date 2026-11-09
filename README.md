@@ -2,17 +2,22 @@
 
 A one-page dashboard over the **LEDGERS.cloud** project in Nifty, so nobody has to scroll the full task list.
 
+- **Filters** — person, module owner, stage, status, task type, priority, country, planned month and search. They narrow every view and are kept in the link.
 - **Overview** — open work by stage, by module owner (from the list name), and tasks finished per week.
-- **People** — everyone with work: open, active, overdue, finished this week, last activity, and the task they last touched. Click a person for their task list.
+- **All tasks** — open and finished tasks. Click one to open its panel: details, description, subtasks, checklists and comments. Edit it there, or tick several and use **Bulk edit**. CSV download.
+- **People** — everyone with work: open, active, overdue, finished this week, last activity, and the task they last touched.
 - **Needs attention** — open tasks that are overdue or untouched for 30+ days.
 - **SOP health** — open tasks checked against *Nifty Process SOP v2.0*: SOP statuses only, list naming template, exactly 2 assignees with the Team Lead among them, and the §8.6 mandatory fields (start/due date, estimate, Planned Month, Planned/Unplanned, Task Type, Developer, Tester, Team Lead, priority) for every task past Pipeline.
+- **Morning email** — every weekday around 9:30 IST: what became overdue, what is due today, who finished what, and each owner's numbers.
 
-Data is read live from Nifty's v3 API on the server and cached for 5 minutes. The token never reaches the browser.
+Data is read from Nifty's v3 API on the server and cached for 5 minutes (a save refreshes it at once). The page reloads itself every 30 minutes. The token never reaches the browser.
 
 ## Setup
 
-1. In Nifty: **Settings → API Tokens → New token**, with read scopes for tasks, statuses and lists. Copy it (it is shown once).
-2. Copy `.env.example` to `.env.local` and paste the token as `NIFTY_TOKEN`.
+1. In Nifty: **Settings → API Tokens → New token** with these scopes:
+   - to view: `tasks:read`, `statuses:read`, `lists:read`, `members:read`, `custom-fields:read`, `messages:read`
+   - to edit and comment: `tasks:write`, `messages:write`
+2. Copy `.env.example` to `.env.local` and fill it in.
 3. Run it:
 
    ```bash
@@ -24,15 +29,27 @@ Data is read live from Nifty's v3 API on the server and cached for 5 minutes. Th
 
 ## Deploy on Vercel
 
-1. Push this folder to a GitHub repository.
-2. In Vercel: **Add New → Project**, import the repository (framework: Next.js, no other settings needed).
-3. Under **Settings → Environment Variables**, add `NIFTY_TOKEN` (and `NIFTY_PROJECT_ID` only if it is not `yb6vQ7M!g0`).
-4. Deploy.
+1. Import the GitHub repository in Vercel (framework: Next.js).
+2. Under **Settings → Environment Variables**, add the values from `.env.example`.
+3. Deploy. `vercel.json` schedules the morning email (`0 4 * * 1-5` UTC = 9:30 IST, weekdays). On the Hobby plan Vercel may run it any time within that hour.
 
-The site has no login: anyone with the link can see task titles, people and due dates. Search engines are told not to index it.
+## Editing
+
+Edits and comments go to Nifty through the server with `NIFTY_TOKEN`, so Nifty shows them as made by the token's owner. They need the `EDIT_KEY`: the first time you save, the dashboard asks for it and remembers it in that browser. Without `EDIT_KEY` set, the dashboard is read-only. Nifty has no bulk endpoint, so bulk edit updates tasks one by one, three at a time.
+
+What can be edited: assignees, Team Lead, Developer, Tester, start and due dates, estimate, priority, task type, planned month, planned/unplanned. Status and completing tasks are left to Nifty.
+
+## Morning email
+
+Sent through [Resend](https://resend.com). Set `RESEND_API_KEY`, `DIGEST_TO` and `CRON_SECRET`. Until you verify your own domain in Resend, leave `DIGEST_FROM` empty: Resend's test sender then delivers only to the address you signed up with. The dashboard footer has **Preview** and **Send now** (they use the edit key).
+
+## Who can see it
+
+There is no login: anyone with the link can see task titles, descriptions, comments, people and due dates. Search engines are told not to index it. Changes need the edit key.
 
 ## Changing the rules
 
 - Status names, the list-name pattern, stages and the "stuck" threshold: `lib/config.ts`.
 - Custom field ids (Team Lead, Developer, Tester, …): `CUSTOM_FIELDS` in `lib/config.ts`.
 - The checks themselves: `buildDashboard` in `lib/compute.ts`.
+- The email: `lib/digest.ts`.

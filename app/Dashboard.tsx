@@ -1,9 +1,15 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DashboardData, RuleId, Summary, TaskRow } from '@/lib/compute';
 import { RULES, isStuck, shortDate, summarize } from '@/lib/compute';
+import { BulkEdit } from './BulkEdit';
+import { TaskPanel } from './TaskPanel';
+import { KeyBox, KeyProblem, getKey } from './edit-client';
+
+/** Opens a task in the side panel. */
+const OpenTask = createContext<(r: TaskRow) => void>(() => {});
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -102,6 +108,10 @@ function listView(rows: TaskRow[], f: Filters, today: string): TaskRow[] {
 export function Dashboard({ data }: { data: DashboardData }) {
   const [tab, setTab] = useState<TabId>('overview');
   const [f, setF] = useState<Filters>(EMPTY);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const openRow = openId ? data.rows.find((r) => r.id === openId) : undefined;
+  const openTask = useCallback((r: TaskRow) => setOpenId(r.id), []);
+  const closeTask = useCallback(() => setOpenId(null), []);
 
   useEffect(() => {
     const read = () => {
@@ -109,7 +119,14 @@ export function Dashboard({ data }: { data: DashboardData }) {
       if (TABS.some((t) => t.id === h)) setTab(h as TabId);
     };
     read();
-    setF(readFilters());
+    const fresh = readFilters();
+    setF(fresh);
+    // Links from the morning email carry ?task=<id> to open that task straight away.
+    const t = new URLSearchParams(window.location.search).get('task');
+    if (t) {
+      setOpenId(t);
+      writeFilters(fresh);
+    }
     window.addEventListener('hashchange', read);
     return () => window.removeEventListener('hashchange', read);
   }, []);
@@ -150,6 +167,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
   const { summary } = s;
 
   return (
+    <OpenTask.Provider value={openTask}>
     <main className="page">
       <header className="head">
         <div className="head-row">
@@ -183,7 +201,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
       </nav>
 
       {tab === 'overview' && <Overview s={s} pick={(patch) => { update({ ...patch, show: 'open', view: '' }); go('tasks'); }} />}
-      {tab === 'tasks' && <AllTasks rows={listView(filtered, f, data.today)} f={f} update={update} historyDays={data.historyDays} />}
+      {tab === 'tasks' && <AllTasks rows={listView(filtered, f, data.today)} f={f} update={update} historyDays={data.historyDays} options={data.options} />}
       {tab === 'people' && <People s={s} rows={filtered} />}
       {tab === 'attention' && <Attention s={s} />}
       {tab === 'sop' && <Sop s={s} rows={filtered} />}
@@ -191,8 +209,11 @@ export function Dashboard({ data }: { data: DashboardData }) {
       <footer className="foot">
         Live from Nifty, project LEDGERS.cloud. Refreshed at most every 5 minutes. Finished tasks go back {data.historyDays} days. Rules in SOP
         health follow Nifty Process SOP v2.0.
+        <DigestTools />
       </footer>
+      {openRow && <TaskPanel row={openRow} options={data.options} onClose={closeTask} />}
     </main>
+    </OpenTask.Provider>
   );
 }
 
@@ -426,13 +447,18 @@ function Overview({ s, pick }: { s: Summary; pick: (p: Partial<Filters>) => void
   );
 }
 
-function TaskLink({ row }: { row: Pick<TaskRow, 'key' | 'url'> }) {
-  return /^https:\/\/nifty\.pm\//.test(row.url) ? (
-    <a className="key" href={row.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+function TaskLink({ row }: { row: TaskRow }) {
+  const open = useContext(OpenTask);
+  return (
+    <button
+      className="key linkish"
+      onClick={(e) => {
+        e.stopPropagation();
+        open(row);
+      }}
+    >
       {row.key}
-    </a>
-  ) : (
-    <span className="key">{row.key}</span>
+    </button>
   );
 }
 
@@ -449,11 +475,35 @@ type SortId = keyof typeof SORTS;
 
 const VIEW_NAME: Record<View, string> = { '': '', overdue: 'Overdue', stuck: 'Stuck 30+ days', done7: 'Finished in the last 7 days' };
 
-function AllTasks({ rows, f, update, historyDays }: { rows: TaskRow[]; f: Filters; update: (p: Partial<Filters>) => void; historyDays: number }) {
+function AllTasks({
+  rows,
+  f,
+  update,
+  historyDays,
+  options,
+}: {
+  rows: TaskRow[];
+  f: Filters;
+  update: (p: Partial<Filters>) => void;
+  historyDays: number;
+  options: DashboardData['options'];
+}) {
+  const open = useContext(OpenTask);
   const [sort, setSort] = useState<SortId>('due');
-  const [open, setOpen] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState(false);
   const effective: SortId = f.view === 'done7' || f.show === 'done' ? (sort === 'due' ? 'finished' : sort) : sort;
   const sorted = useMemo(() => [...rows].sort(SORTS[effective].fn), [rows, effective]);
+  // Selection only keeps tasks that are still on screen after a filter change.
+  const chosen = sorted.filter((r) => picked.has(r.id));
+  const allOn = sorted.length > 0 && chosen.length === sorted.length;
+  const toggle = (id: string) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   return (
     <div className="pane">
@@ -468,7 +518,7 @@ function AllTasks({ rows, f, update, historyDays }: { rows: TaskRow[]; f: Filter
             )}
           </>
         }
-        note={`Every task matching the filters. Click a row for full details; click the task id to open it in Nifty. Finished tasks go back ${historyDays} days.`}
+        note={`Every task matching the filters. Click a task to see its description and comments, or to edit it. Tick tasks to change many at once. Finished tasks go back ${historyDays} days.`}
         actions={
           <div className="toolbar">
             <div className="seg-ctl" role="group" aria-label="Which tasks">
@@ -494,6 +544,17 @@ function AllTasks({ rows, f, update, historyDays }: { rows: TaskRow[]; f: Filter
           </div>
         }
       >
+        {chosen.length > 0 && (
+          <div className="bulk-bar" role="region" aria-label="Selected tasks">
+            <b>{chosen.length} selected</b>
+            <button className="btn primary" onClick={() => setBulk(true)}>
+              Bulk edit
+            </button>
+            <button className="btn" onClick={() => setPicked(new Set())}>
+              Clear selection
+            </button>
+          </div>
+        )}
         {!sorted.length ? (
           <p className="empty">No tasks match these filters.</p>
         ) : (
@@ -501,6 +562,17 @@ function AllTasks({ rows, f, update, historyDays }: { rows: TaskRow[]; f: Filter
             <table className="table tasks">
               <thead>
                 <tr>
+                  <th className="pickcol">
+                    <input
+                      type="checkbox"
+                      aria-label={allOn ? 'Unselect all' : 'Select all shown'}
+                      checked={allOn}
+                      ref={(el) => {
+                        if (el) el.indeterminate = chosen.length > 0 && !allOn;
+                      }}
+                      onChange={() => setPicked(allOn ? new Set() : new Set(sorted.map((r) => r.id)))}
+                    />
+                  </th>
                   <th>Task</th>
                   <th>Title</th>
                   <th className="hide-sm">Status</th>
@@ -512,92 +584,46 @@ function AllTasks({ rows, f, update, historyDays }: { rows: TaskRow[]; f: Filter
               </thead>
               <tbody>
                 {sorted.map((r) => (
-                  <Fragment key={r.key}>
-                    <tr
-                      className={open === r.key ? 'picked' : ''}
-                      onClick={() => setOpen(open === r.key ? null : r.key)}
-                      tabIndex={0}
-                      aria-expanded={open === r.key}
-                      onKeyDown={(e) => e.key === 'Enter' && setOpen(open === r.key ? null : r.key)}
-                    >
-                      <td className="nowrap">
-                        <TaskLink row={r} />
-                      </td>
-                      <td>
-                        {r.name}
-                        {r.done && <span className="chip done">Finished {shortDate(r.doneDay)}</span>}
-                        {r.priority === 'High' && <span className="chip hi">High</span>}
-                      </td>
-                      <td className="hide-sm">{r.status}</td>
-                      <td className="hide-sm">{r.owner}</td>
-                      <td className="hide-sm">{r.assignees}</td>
-                      <td className={`nowrap${r.late ? ' bad' : ''}`}>{r.dueLabel}</td>
-                      <td className="hide-sm nowrap">{r.agoLabel}</td>
-                    </tr>
-                    {open === r.key && (
-                      <tr className="detail-row">
-                        <td colSpan={7}>
-                          <Detail r={r} />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
+                  <tr
+                    key={r.id}
+                    className={picked.has(r.id) ? 'picked' : ''}
+                    onClick={() => open(r)}
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && open(r)}
+                  >
+                    <td className="pickcol" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" aria-label={`Select ${r.key}`} checked={picked.has(r.id)} onChange={() => toggle(r.id)} />
+                    </td>
+                    <td className="nowrap">
+                      <TaskLink row={r} />
+                    </td>
+                    <td>
+                      {r.name}
+                      {r.done && <span className="chip done">Finished {shortDate(r.doneDay)}</span>}
+                      {r.priority === 'High' && <span className="chip hi">High</span>}
+                    </td>
+                    <td className="hide-sm">{r.status}</td>
+                    <td className="hide-sm">{r.owner}</td>
+                    <td className="hide-sm">{r.assignees}</td>
+                    <td className={`nowrap${r.late ? ' bad' : ''}`}>{r.dueLabel}</td>
+                    <td className="hide-sm nowrap">{r.agoLabel}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </Card>
-    </div>
-  );
-}
-
-function Detail({ r }: { r: TaskRow }) {
-  const items: [string, React.ReactNode][] = [
-    ['Status', `${r.status} (${r.stage})`],
-    ['List', r.list],
-    ['Assigned to', r.assignees],
-    ['Team lead', r.lead || '—'],
-    ['Developer', r.developer || '—'],
-    ['Tester', r.tester || '—'],
-    ['Task type', r.taskType || '—'],
-    ['Priority', r.priority || '—'],
-    ['Country', r.country || '—'],
-    ['Planned month', r.plannedMonth || '—'],
-    ['Planned / Unplanned', r.planned || '—'],
-    ['Start', shortDate(r.start)],
-    ['Due', r.due ? `${shortDate(r.due)}${r.late ? ` (${r.dueLabel})` : ''}` : '—'],
-    ['Estimate', r.estimate || '—'],
-    ['Created', shortDate(r.created)],
-    [r.done ? 'Finished' : 'Last update', r.done ? shortDate(r.doneDay) : r.agoLabel],
-    ['Labels', r.labels.length ? r.labels.join(', ') : '—'],
-    ['Subtask', r.subtask ? 'Yes' : 'No'],
-  ];
-  return (
-    <div className="detail">
-      <dl>
-        {items.map(([k, v]) => (
-          <div key={k}>
-            <dt>{k}</dt>
-            <dd>{v}</dd>
-          </div>
-        ))}
-      </dl>
-      {!r.done && (
-        <div className="detail-sop">
-          <span className="dt">SOP</span>
-          {r.issues.length ? (
-            <div className="chips">
-              {r.issues.map((i) => (
-                <span key={i} className="chip">
-                  {RULE_SHORT[i]}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="ok">Follows the SOP</span>
-          )}
-        </div>
+      {bulk && chosen.length > 0 && (
+        <BulkEdit
+          rows={chosen}
+          options={options}
+          onClose={() => setBulk(false)}
+          onDone={() => {
+            setBulk(false);
+            setPicked(new Set());
+          }}
+        />
       )}
     </div>
   );
@@ -753,7 +779,7 @@ function TaskTable({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key}>
+            <TaskTr key={r.id} row={r}>
               <td className="nowrap">
                 <TaskLink row={r} />
               </td>
@@ -781,7 +807,7 @@ function TaskTable({
                   </td>
                 );
               })}
-            </tr>
+            </TaskTr>
           ))}
         </tbody>
       </table>
@@ -789,10 +815,20 @@ function TaskTable({
   );
 }
 
+/** A table row that opens the task panel when clicked. */
+function TaskTr({ row, children }: { row: TaskRow; children: React.ReactNode }) {
+  const open = useContext(OpenTask);
+  return (
+    <tr className="clickable" onClick={() => open(row)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open(row)}>
+      {children}
+    </tr>
+  );
+}
+
 function Attention({ s }: { s: Summary }) {
   return (
     <div className="pane">
-      <Card title="Needs attention" note="Open tasks that are overdue or haven't been updated in 30+ days. Most overdue first. Click a task to open it in Nifty.">
+      <Card title="Needs attention" note="Open tasks that are overdue or haven't been updated in 30+ days. Most overdue first. Click a task to see details, comments and to edit it.">
         <TaskTable rows={s.attention} columns={['owner', 'stage', 'assignees', 'reason']} empty="Nothing overdue or stuck." />
       </Card>
     </div>
@@ -878,10 +914,76 @@ function Sop({ s, rows: all }: { s: Summary; rows: TaskRow[] }) {
             )}
           </>
         }
-        note="Most problems first. Click a task to fix it in Nifty."
+        note="Most problems first. Click a task to fix it right here."
       >
         <TaskTable rows={rows} columns={['owner', 'stage', 'issues']} empty="Every task here follows the SOP." />
       </Card>
+    </div>
+  );
+}
+
+
+/** Footer controls for the morning email: preview it or send it now. Needs the edit key. */
+function DigestTools() {
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [needKey, setNeedKey] = useState<{ error: string; then: 'preview' | 'send' } | null>(null);
+
+  const go = async (what: 'preview' | 'send') => {
+    if (!getKey()) return setNeedKey({ error: '', then: what });
+    // Open the window before the request so pop-up blockers allow it.
+    const win = what === 'preview' ? window.open('', '_blank') : null;
+    setBusy(true);
+    setMsg('');
+    try {
+      const res = await fetch('/api/digest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-edit-key': getKey() },
+        body: JSON.stringify({ preview: what === 'preview' }),
+      });
+      if (res.status === 401) throw new KeyProblem('Wrong edit key.');
+      if (what === 'preview') {
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Preview failed');
+        const html = await res.text();
+        if (win) {
+          win.document.open();
+          win.document.write(html);
+          win.document.close();
+        }
+      } else {
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || 'Sending failed');
+        setMsg(`Sent to ${j.to} ${j.to === 1 ? 'person' : 'people'}.`);
+      }
+    } catch (e) {
+      win?.close();
+      if (e instanceof KeyProblem) setNeedKey({ error: e.message, then: what });
+      else setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="digest-tools">
+      <span>Morning email:</span>
+      <button className="linkish" onClick={() => go('preview')} disabled={busy}>
+        Preview
+      </button>
+      <button className="linkish" onClick={() => go('send')} disabled={busy}>
+        Send now
+      </button>
+      {msg && <span>{msg}</span>}
+      {needKey && (
+        <KeyBox
+          error={needKey.error || undefined}
+          onSet={() => {
+            const then = needKey.then;
+            setNeedKey(null);
+            void go(then);
+          }}
+        />
+      )}
     </div>
   );
 }

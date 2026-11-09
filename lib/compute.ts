@@ -11,7 +11,7 @@ import {
   WEEKS,
   stageOf,
 } from './config';
-import type { NiftyNamed, NiftyTask } from './nifty';
+import type { FieldOptions, NiftyNamed, NiftyTask } from './nifty';
 
 const DAY = 864e5;
 const dateFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE });
@@ -70,7 +70,23 @@ export const RULES = [
 ] as const;
 export type RuleId = (typeof RULES)[number]['id'];
 
+/** Raw Nifty values the edit forms start from. */
+export interface EditValues {
+  assignees: string[];
+  lead: string[];
+  developer: string[];
+  tester: string[];
+  start: string;
+  due: string;
+  estimateMin: number | null;
+  priority: string;
+  taskType: string;
+  plannedMonth: string;
+  planned: string;
+}
+
 export interface TaskRow {
+  id: string;
   key: string;
   name: string;
   url: string;
@@ -104,6 +120,15 @@ export interface TaskRow {
   agoLabel: string;
   active: boolean;
   issues: RuleId[];
+  edit: EditValues;
+}
+
+export interface EditOptions {
+  members: { id: string; name: string }[];
+  priority: string[];
+  taskType: string[];
+  plannedMonth: string[];
+  planned: string[];
 }
 
 export interface DashboardData {
@@ -111,6 +136,7 @@ export interface DashboardData {
   today: string;
   historyDays: number;
   rows: TaskRow[];
+  options: EditOptions;
 }
 
 const present = (v: unknown) =>
@@ -132,7 +158,14 @@ function monthLabel(v: string): string {
 }
 
 export function buildDashboard(
-  input: { open: NiftyTask[]; done: NiftyTask[]; statuses: NiftyNamed[]; lists: NiftyNamed[]; members?: NiftyNamed[] },
+  input: {
+    open: NiftyTask[];
+    done: NiftyTask[];
+    statuses: NiftyNamed[];
+    lists: NiftyNamed[];
+    members?: NiftyNamed[];
+    fieldOptions?: FieldOptions;
+  },
   now = new Date(),
 ): DashboardData {
   const today = localDate(now);
@@ -144,12 +177,13 @@ export function buildDashboard(
   // Member ids → names: from the members list if the token can read it, else from everyone seen as an assignee.
   const memberName = new Map((input.members || []).filter((m) => m && m.id && m.name).map((m) => [m.id, m.name]));
   for (const t of [...input.open, ...input.done]) for (const p of t.assignees || []) if (!memberName.has(p.id)) memberName.set(p.id, p.name);
-  const names = (v: unknown) =>
+  const ids = (v: unknown) =>
     str(v)
       .split(',')
       .map((id) => id.trim())
-      .filter(Boolean)
-      .map((id) => memberName.get(id) || 'Unknown person');
+      .filter(Boolean);
+  const names = (v: unknown) => ids(v).map((id) => memberName.get(id) || 'Unknown person');
+  const seen = { priority: new Set<string>(), taskType: new Set<string>(), plannedMonth: new Set<string>(), planned: new Set<string>() };
 
   const rows: TaskRow[] = [];
   const add = (t: NiftyTask, done: boolean) => {
@@ -171,6 +205,21 @@ export function buildDashboard(
     const due = t.dueAt ? localDate(t.dueAt) : null;
     const late = !done && due && due < today ? t0 - dayNum(due) : 0;
     const idle = Math.max(0, t0 - dayNum(doneDay || localDate(t.updatedAt)));
+
+    const edit: EditValues = {
+      assignees: assigned.map((p) => p.id),
+      lead: ids(cf.get(CUSTOM_FIELDS.teamLead)),
+      developer: ids(cf.get(CUSTOM_FIELDS.developer)),
+      tester: ids(cf.get(CUSTOM_FIELDS.tester)),
+      start: t.startAt ? localDate(t.startAt) : '',
+      due: t.dueAt ? localDate(t.dueAt) : '',
+      estimateMin: t.estimate ?? null,
+      priority: str(cf.get(CUSTOM_FIELDS.priority)),
+      taskType: str(cf.get(CUSTOM_FIELDS.taskType)),
+      plannedMonth: str(cf.get(CUSTOM_FIELDS.plannedMonth)),
+      planned: str(cf.get(CUSTOM_FIELDS.plannedUnplanned)),
+    };
+    for (const k of ['priority', 'taskType', 'plannedMonth', 'planned'] as const) if (edit[k]) seen[k].add(edit[k]);
 
     const issues: RuleId[] = [];
     if (!done) {
@@ -194,6 +243,7 @@ export function buildDashboard(
     }
 
     rows.push({
+      id: t.id,
       key: t.identifier,
       name: cleanText(t.name) || t.identifier,
       url: t.url,
@@ -226,12 +276,25 @@ export function buildDashboard(
       agoLabel: ago(idle),
       active: !done && ACTIVE_STAGES.includes(stage),
       issues,
+      edit,
     });
   };
   for (const t of input.open) add(t, false);
   for (const t of input.done) if (t.completedAt) add(t, true);
 
-  return { generatedAt: now.toISOString(), today, historyDays: HISTORY_DAYS, rows };
+  // Choices for the edit forms: Nifty's own dropdown options when the token can read them, else values already in use.
+  const fo = input.fieldOptions || {};
+  const choose = (id: string, used: Set<string>) =>
+    (fo[id]?.length ? fo[id]! : [...used]).slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const options: EditOptions = {
+    members: [...memberName].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+    priority: choose(CUSTOM_FIELDS.priority, seen.priority),
+    taskType: choose(CUSTOM_FIELDS.taskType, seen.taskType),
+    plannedMonth: choose(CUSTOM_FIELDS.plannedMonth, seen.plannedMonth),
+    planned: choose(CUSTOM_FIELDS.plannedUnplanned, seen.planned),
+  };
+
+  return { generatedAt: now.toISOString(), today, historyDays: HISTORY_DAYS, rows, options };
 }
 
 // ---------- Summaries. Pure, so the browser can re-run them on whatever the filters leave. ----------
