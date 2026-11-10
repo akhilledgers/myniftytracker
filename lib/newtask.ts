@@ -8,7 +8,7 @@ export const KINDS: TaskKind[] = ['Bug', 'Enhancement', 'Feature', 'Tech debt'];
 const SIGNALS: Record<TaskKind, [RegExp, number][]> = {
   Bug: [
     [/\bbugs?\b/, 3],
-    [/\b(not|isn'?t|doesn'?t|does not|is not|are not|aren'?t|won'?t|didn'?t|did not)\s+(work|working|show|showing|load|loading|sav|open|display|appear|updat|sync|calculat|generat|reflect|allow|go|come|get|captur|fetch|trigger)/, 3],
+    [/\b(not|isn'?t|doesn'?t|does not|is not|are not|aren'?t|won'?t|didn'?t|did not)\s+(work|working|show|showing|load|loading|sav|open|display|appear|updat|sync|calculat|generat|reflect|allow|go|come|get|captur|fetch|trigger|match|tally|balanc)/, 3],
     [/^\s*fix\b|\bfix (the |for )?(issue|bug|error)/, 3],
     [/\bshowing \w+ in .* but\b|\bbut (it )?(shows|showing)\b/, 2],
     [/\b(crash|crashes|crashing|broken|breaks|glitch|freez|exception)/, 3],
@@ -244,4 +244,102 @@ export function fullDescription(i: NewTaskInput): string {
   ].filter(([, u]) => u && u.trim()) as [string, string][];
   if (!refs.length) return body;
   return `${body}${body ? '\n\n' : ''}## Reference documents\n${refs.map(([n, u]) => `- ${n}: ${u.trim()}`).join('\n')}`;
+}
+
+// ---------- Which list a task belongs in ----------
+
+// Words that say which country a task is for (SOP §12: tasks are filed under the right country).
+const UAE_WORDS = /\b(uae|vat|emirates?|aed|fta|corporate tax|trn|dubai|abu dhabi)\b/i;
+const INDIA_WORDS = /\b(gst|gstr\S*|gstin|india|indian|tds|tcs|e-?invoice|e-?way|hsn|tan|cin|llp|bharat|upi|inr|itr)\b/i;
+
+/** IN or AE when the text clearly says so, else ''. */
+export function guessCountry(text: string): string {
+  const ae = UAE_WORDS.test(text);
+  const ind = INDIA_WORDS.test(text);
+  return ae && !ind ? 'AE' : ind && !ae ? 'IN' : '';
+}
+
+const LIST_STOP = new Set(
+  'a an the to of in on for and or is are be with from at by as not it this that when while into via new add need needs should all v4 v3 based using option issue update'.split(' '),
+);
+const tokens = (s: string) => (s.toLowerCase().match(/[a-z0-9]+/g) || []).filter((w) => w.length > 2 && !LIST_STOP.has(w));
+
+// What each SOP app (§5.2, §6) covers, so a title can point at an app even when few tasks are filed there yet.
+const APP_WORDS: Record<string, string[]> = {
+  Tax: ['gst', 'gstr', 'gstr1', 'gstr3b', 'vat', 'tax', 'taxation', 'return', 'returns', 'filing', 'tds', 'tcs', 'itr', 'computation', 'einvoice', 'eway', 'gsp', 'reverse', 'corporate'],
+  Money: ['bank', 'banking', 'reconciliation', 'reconcile', 'statement', 'payment', 'payments', 'payout', 'upi', 'cash', 'nach', 'mandate', 'connected'],
+  People: ['payroll', 'salary', 'salaries', 'employee', 'employees', 'attendance', 'leave', 'leaves', 'payslip', 'hrms', 'holiday', 'shift', 'appraisal'],
+  Bills: ['invoice', 'invoices', 'quote', 'quotation', 'estimate', 'sales', 'customer', 'customers', 'receipt', 'receipts', 'credit', 'proforma', 'delivery', 'challan'],
+  Books: ['ledger', 'ledgers', 'journal', 'voucher', 'expense', 'expenses', 'purchase', 'purchases', 'vendor', 'vendors', 'balance', 'profit', 'trial', 'depreciation', 'asset', 'assets', 'inventory', 'stock', 'export', 'import', 'accounting', 'coa', 'financial'],
+  Practice: ['practice', 'client', 'clients', 'accountant', 'firm'],
+  Grow: ['lead', 'leads', 'crm', 'incentive', 'catalog', 'catalogue', 'service', 'services'],
+  Common: ['user', 'users', 'role', 'roles', 'permission', 'access', 'login', 'otp', 'settings', 'contact', 'contacts', 'notification', 'notifications', 'whatsapp', 'email', 'audit', 'subscription', 'plan', 'website', 'android', 'ios', 'mobile', 'hsn', 'items'],
+};
+
+export interface ListModel {
+  words: Map<string, Map<string, number>>; // list name → word → tasks using it
+  totals: Map<string, number>;
+  tasks: Map<string, number>;
+  all: number;
+}
+
+/** Learns which words go with which list from the tasks already filed there. */
+export function buildListModel(tasks: { name: string; list: string }[], lists: { name: string }[]): ListModel {
+  const known = new Set(lists.map((l) => l.name));
+  const m: ListModel = { words: new Map(), totals: new Map(), tasks: new Map(), all: 0 };
+  for (const t of tasks) {
+    if (!known.has(t.list)) continue;
+    m.all++;
+    m.tasks.set(t.list, (m.tasks.get(t.list) || 0) + 1);
+    const wc = m.words.get(t.list) || new Map<string, number>();
+    for (const w of new Set(tokens(t.name))) {
+      wc.set(w, (wc.get(w) || 0) + 1);
+      m.totals.set(t.list, (m.totals.get(t.list) || 0) + 1);
+    }
+    m.words.set(t.list, wc);
+  }
+  return m;
+}
+
+export interface ListGuess {
+  id: string;
+  name: string;
+  because: string[];
+}
+
+/**
+ * The 3 most likely lists for a title. Tested on 342 existing tasks: the right list came first half the time
+ * and was in the top 3 two times in three, so the form offers these rather than picking one.
+ */
+export function suggestLists(model: ListModel, lists: { id: string; name: string }[], title: string, description = ''): ListGuess[] {
+  const ws = [...new Set(tokens(title))];
+  if (ws.length < 2) return [];
+  const country = guessCountry(`${title} ${description}`);
+  const VOCAB = 2000;
+  const scored = lists.map((l) => {
+    const p = parseList(l.name);
+    const own = new Set(tokens(`${p.app} ${p.module}`));
+    const appWords = new Set(APP_WORDS[p.app] || []);
+    const wc = model.words.get(l.name) || new Map<string, number>();
+    const total = model.totals.get(l.name) || 0;
+    let s = Math.log(((model.tasks.get(l.name) || 0) + 1) / (model.all + lists.length));
+    const because: string[] = [];
+    for (const w of ws) {
+      const named = own.has(w) || [...own].some((o) => o.length > 4 && w.length > 4 && (o.startsWith(w.slice(0, 5)) || w.startsWith(o.slice(0, 5))));
+      const seen = wc.get(w) || 0;
+      const app = appWords.has(w);
+      s += Math.log((seen + 0.5) / (total + 0.5 * VOCAB)) + (named ? 3 : 0) + (app && !named ? 1.5 : 0);
+      if (named || app || seen >= 2) because.push(w);
+    }
+    if (country) {
+      if (p.country === country) because.push(country === 'AE' ? 'UAE words' : 'India words');
+      else s -= 8;
+    }
+    return { id: l.id, name: l.name, because, s };
+  });
+  return scored
+    .filter((x) => x.because.length > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 3)
+    .map(({ id, name, because }) => ({ id, name, because: because.slice(0, 3) }));
 }

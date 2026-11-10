@@ -8,7 +8,7 @@ A one-page dashboard over the **LEDGERS.cloud** project in Nifty, so nobody has 
 - **People** — everyone with work: open, active, overdue, finished this week, last activity, and the task they last touched.
 - **Needs attention** — open tasks that are overdue or untouched for 30+ days.
 - **SOP health** — open tasks checked against *Nifty Process SOP v2.0*: SOP statuses only, list naming template, exactly 2 assignees with the Team Lead among them, and the §8.6 mandatory fields (start/due date, estimate, Planned Month, Planned/Unplanned, Task Type, Developer, Tester, Team Lead, priority) for every task past Pipeline.
-- **New task** — create a task in the SOP format. The task type (Bug, Enhancement, Feature, Tech debt) and priority are suggested from what you type, the description template follows the type, the Team Lead comes from the list, the two assignees are set per §8.4, and similar open tasks are shown first (§7). A task starting in 02 To Do needs every §8.6 field.
+- **New task** — create a task in the SOP format. The task type (Bug, Enhancement, Feature, Tech debt) and priority are suggested from what you type, the description template follows the type, the list is suggested from the title and picked as Country → App → Module, the Team Lead comes from the list, the Tester from the Team Lead, the two assignees are set per §8.4, and similar open tasks are shown first (§7). A task starting in 02 To Do needs every §8.6 field.
 - **Morning email** — every weekday around 9:30 IST: what became overdue, what is due today, who finished what, and each owner's numbers.
 
 Data is read from Nifty's v3 API on the server and cached for 5 minutes (a save refreshes it at once). The page reloads itself every 30 minutes. The token never reaches the browser.
@@ -56,3 +56,5 @@ There is no login: anyone with the link can see task titles, descriptions, comme
 - Custom field ids (Team Lead, Developer, Tester, …): `CUSTOM_FIELDS` in `lib/config.ts`.
 - The checks themselves: `buildDashboard` in `lib/compute.ts`.
 - The email: `lib/digest.ts`.
+- Each Team Lead's fixed tester: `TESTER_BY_LEAD` in `lib/config.ts`. SOP apps and countries: `SOP_APPS`, `COUNTRIES`.
+- Type, priority and list suggestions: `lib/newtask.ts`. The list suggestion learns from tasks already filed in each list and puts the right list in its top 3 about two times in three.

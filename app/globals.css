@@ -300,3 +300,8 @@ textarea:focus-visible, .edit-form input:focus-visible, .edit-form select:focus-
 .sop-check { font-size: 13px; padding: 10px 12px; border-radius: 6px; border: 1px dashed var(--bad); }
 .sop-check.pass { border: 1px solid var(--ok); }
 .sop-check.pass b { color: var(--ok); }
+.list-guess { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip-btn { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--fg); cursor: pointer; }
+.chip-btn:hover { filter: brightness(1.08); }
+.chip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.edit-form .field-row > select { min-width: 0; }

@@ -5,8 +5,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { EditOptions, TaskRow } from '@/lib/compute';
+import { COUNTRIES, SOP_APPS, TESTER_BY_LEAD } from '@/lib/config';
 import {
   KINDS,
+  buildListModel,
+  guessCountry,
+  suggestLists,
   TEMPLATES,
   isTemplate,
   missingForSop,
@@ -54,7 +58,9 @@ export function NewTask({
   const [leadPick, setLeadPick] = useState<string[] | null>(null);
   const [plannedMonth, setPlannedMonth] = useState(() => monthOption(options.plannedMonth, today));
   const [developer, setDeveloper] = useState<string[]>([]);
-  const [tester, setTester] = useState<string[]>([]);
+  const [testerPick, setTesterPick] = useState<string[] | null>(null);
+  const [countryPick, setCountryPick] = useState('');
+  const [appPick, setAppPick] = useState('');
   const [subscribers, setSubscribers] = useState<string[]>([]);
   const [start, setStart] = useState(today);
   const [due, setDue] = useState('');
@@ -100,6 +106,43 @@ export function NewTask({
     return hit ? [hit.id] : [];
   }, [list, parts?.lead, rows, m]);
   const lead = leadPick ?? leadFromList;
+
+  // Each Team Lead has a fixed tester (lib/config.ts). Follows the lead until you pick a tester yourself.
+  const testerFromLead = useMemo(() => {
+    const leadName = m.find((p) => p.id === lead[0])?.name || '';
+    const keys = [parts?.lead || '', ...leadName.split(/[\s/|]+/)].map((w) => w.toLowerCase());
+    const id = keys.map((k) => TESTER_BY_LEAD[k]).find(Boolean);
+    return id && m.some((p) => p.id === id) ? [id] : [];
+  }, [lead, parts?.lead, m]);
+  const tester = testerPick ?? testerFromLead;
+
+  // Country → App → Module (SOP §5.2, §5.3), each module being one Nifty list.
+  const country = parts?.country || countryPick || guessCountry(`${name} ${description}`);
+  const app = parts?.app || appPick;
+  const inCountry = options.lists.filter((l) => parseList(l.name).country === country);
+  const modules = inCountry.filter((l) => parseList(l.name).app.toLowerCase() === app.toLowerCase());
+  const moduleLabel = (l: { name: string }) => {
+    const p = parseList(l.name);
+    const twin = modules.filter((x) => parseList(x.name).module.toLowerCase() === p.module.toLowerCase()).length > 1;
+    return twin ? `${p.module} (${p.lead})` : p.module;
+  };
+  const appsHere = new Set(inCountry.map((l) => parseList(l.name).app.toLowerCase()));
+  const extraApps = [...new Set(inCountry.map((l) => parseList(l.name).app))].filter((a) => !SOP_APPS.some((x) => x.toLowerCase() === a.toLowerCase()));
+  const pickList = (id: string) => {
+    setListId(id);
+    setLeadPick(null);
+    setTesterPick(null);
+    setDependencyId('');
+    const l = options.lists.find((x) => x.id === id);
+    if (l) {
+      const p = parseList(l.name);
+      setCountryPick(p.country);
+      setAppPick(p.app);
+    }
+  };
+
+  const model = useMemo(() => buildListModel(rows, options.lists), [rows, options.lists]);
+  const listGuesses = useMemo(() => (listId ? [] : suggestLists(model, options.lists, name, description)), [model, options.lists, name, description, listId]);
 
   const priorityGuess = suggestPriority(name, description, kind);
   const priority = priorityPick ?? pickOption(options.priority, priorityGuess);
@@ -174,7 +217,6 @@ export function NewTask({
     }
   };
 
-  const countries = [...new Set(options.lists.map((l) => parseList(l.name).country))];
 
   return (
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -243,23 +285,54 @@ export function NewTask({
               </span>
             </Field>
 
-            <div className="field-row">
-              <Field label="List" note="SOP §5.2: Country - Team Lead - App - Module.">
-                <select aria-label="List" value={listId} onChange={(e) => { setListId(e.target.value); setLeadPick(null); setDependencyId(''); }}>
-                  <option value="">Pick a list</option>
-                  {countries.map((c) => (
-                    <optgroup key={c} label={c}>
-                      {options.lists
-                        .filter((l) => parseList(l.name).country === c)
-                        .map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.name}
-                          </option>
-                        ))}
-                    </optgroup>
+            <Field label="Where it goes" note="SOP §5.2: Country - Team Lead - App - Module. Picking the module picks the list and its team lead.">
+              {listGuesses.length > 0 && (
+                <div className="list-guess" role="group" aria-label="Suggested lists">
+                  <span className="field-note">✨ Suggested:</span>
+                  {listGuesses.map((g) => {
+                    const p = parseList(g.name);
+                    return (
+                      <button key={g.id} type="button" className="chip-btn" title={`${g.name}. Matched: ${g.because.join(', ')}`} onClick={() => pickList(g.id)}>
+                        {p.country} · {p.app} · {p.module} <span className="muted">({p.lead})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="field-row">
+                <select aria-label="Country" value={country} onChange={(e) => { setCountryPick(e.target.value); setListId(''); }}>
+                  <option value="">Country</option>
+                  {Object.entries(COUNTRIES).map(([c, n]) => (
+                    <option key={c} value={c}>
+                      {c} · {n}
+                    </option>
                   ))}
                 </select>
-              </Field>
+                <select aria-label="App" value={app} disabled={!country} onChange={(e) => { setAppPick(e.target.value); setListId(''); }}>
+                  <option value="">App</option>
+                  {[...SOP_APPS, ...extraApps].map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                      {appsHere.has(a.toLowerCase()) ? '' : ' (no list yet)'}
+                    </option>
+                  ))}
+                </select>
+                <select aria-label="Module" value={listId} disabled={!modules.length} onChange={(e) => (e.target.value ? pickList(e.target.value) : setListId(''))}>
+                  <option value="">{app && country && !modules.length ? 'No list yet' : 'Module'}</option>
+                  {modules.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {moduleLabel(l)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {app && country && !modules.length && (
+                <span className="field-note error">There is no {country} - {app} list in Nifty yet. Create it in Nifty with the SOP name, then reload.</span>
+              )}
+              {list && <span className="field-note">List: {list.name}</span>}
+            </Field>
+
+            <div className="field-row">
               <Field label="Starts in" note={stage === 'todo' ? 'All SOP §8.6 fields are needed.' : 'Future work. Fields can wait.'}>
                 <div className="seg-ctl" role="group" aria-label="Starting status">
                   <button type="button" aria-pressed={stage === 'pipeline'} onClick={() => setStage('pipeline')}>
@@ -283,8 +356,8 @@ export function NewTask({
               <Field label="Developer">
                 <PeoplePicker label="Developer" value={developer} onChange={setDeveloper} members={m} />
               </Field>
-              <Field label="Tester">
-                <PeoplePicker label="Tester" value={tester} onChange={setTester} members={m} />
+              <Field label="Tester" note={testerPick === null && testerFromLead.length ? 'Fixed tester for this team lead.' : undefined}>
+                <PeoplePicker label="Tester" value={tester} onChange={(x) => setTesterPick(x)} members={m} />
               </Field>
             </div>
             <p className="field-note sop-line">

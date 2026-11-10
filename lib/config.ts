@@ -57,3 +57,16 @@ export const STUCK_DAYS = 30;
 export const WEEKS = 8;
 // How far back finished tasks are brought in for the task list and people's activity.
 export const HISTORY_DAYS = 90;
+
+// SOP §5.2: the apps a list can belong to, and §5.3: shared services filed under Common.
+export const SOP_APPS = ['Bills', 'Books', 'Tax', 'Money', 'People', 'Agents', 'Docs', 'Trademarks', 'Practice', 'Grow', 'Experts', 'Common'];
+export const COUNTRIES: Record<string, string> = { IN: 'India', AE: 'UAE', US: 'United States', GL: 'Global' };
+
+// The fixed tester for each Team Lead (Nifty member ids). New tasks get this tester when the list sets the lead.
+// Vairavan → Vinoth, Ranjith → Alisha, Pugal → NareshKumar, Karthik → NareshKumar.
+export const TESTER_BY_LEAD: Record<string, string> = {
+  vairavan: 'f2OTApCi6HkzSa',
+  ranjith: '!Z2QevnVol76ls',
+  pugal: 'ua5ZRoe2OidY_',
+  karthik: 'ua5ZRoe2OidY_',
+};
