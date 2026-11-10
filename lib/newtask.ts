@@ -213,7 +213,8 @@ export function sopAssignees(i: Pick<NewTaskInput, 'lead' | 'developer'>): strin
   return [...new Set([i.lead[0], i.developer[0]].filter(Boolean))];
 }
 
-/** What the SOP still needs before this task can be created. Pipeline tasks only need the basics (§8.6 applies outside 01 Pipeline). */
+/** What the SOP still needs before this task can be created. Pipeline tasks only need the basics (§8.6 applies outside 01 Pipeline).
+ *  Estimate is left out on purpose: the developer adds it, not the lead creating the task. */
 export function missingForSop(i: NewTaskInput): string[] {
   const miss: string[] = [];
   if (!i.name.trim()) miss.push('Task name');
@@ -224,7 +225,6 @@ export function missingForSop(i: NewTaskInput): string[] {
   if (!i.start) miss.push('Start date');
   if (!i.due) miss.push('Due date');
   if (i.start && i.due && i.due < i.start) miss.push('Due date after start');
-  if (!i.estimateMin) miss.push('Estimate');
   if (!i.lead.length) miss.push('Team lead');
   if (!i.developer.length) miss.push('Developer');
   if (!i.tester.length) miss.push('Tester');

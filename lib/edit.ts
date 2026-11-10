@@ -124,7 +124,8 @@ export function toCreateBody(raw: NewTaskInput, project: string, statusIds: { pi
     ...(statusId ? { statusId } : {}),
     startAt: day(i.start, 'Start', '10:00:00'),
     dueAt: day(i.due, 'Due', '19:00:00'),
-    estimate: i.estimateMin,
+    // Optional: the developer usually adds the estimate later.
+    ...(i.estimateMin ? { estimate: i.estimateMin } : {}),
     ...(assignees.length ? { assignees } : {}),
     // §8.4: everyone else who needs to follow it is a subscriber, never a third assignee.
     ...(i.subscribers.length ? { subscribers: i.subscribers.filter((s) => !assignees.includes(s)) } : {}),
