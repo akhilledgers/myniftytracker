@@ -151,13 +151,14 @@ async function loadFieldOptions(): Promise<FieldOptions> {
   return out;
 }
 
-async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token()}`,
       Accept: 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...extra,
     },
     body: body ? JSON.stringify(body) : undefined,
     cache: 'no-store',
@@ -198,3 +199,9 @@ export const addComment = (taskId: string, text: string) => call<NiftyMessage>('
 
 export const patchTask = (id: string, body: Record<string, unknown>) =>
   call<NiftyTaskFull>('PATCH', `/tasks/${encodeURIComponent(id)}`, body);
+
+/** Creates a task. The idempotency key makes a double click or retry within 10 minutes return the same task instead of a second one. */
+export const createTask = (body: Record<string, unknown>, idempotencyKey?: string) =>
+  call<NiftyTaskFull>('POST', '/tasks', body, idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined);
+
+export const getList = (id: string) => call<{ id: string; name: string; projectId?: string }>('GET', `/lists/${encodeURIComponent(id)}`);

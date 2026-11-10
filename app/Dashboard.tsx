@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { DashboardData, RuleId, Summary, TaskRow } from '@/lib/compute';
 import { RULES, isStuck, shortDate, summarize } from '@/lib/compute';
 import { BulkEdit } from './BulkEdit';
+import { NewTask } from './NewTask';
 import { TaskPanel } from './TaskPanel';
 import { KeyBox, KeyProblem, getKey } from './edit-client';
 
@@ -109,6 +110,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
   const [tab, setTab] = useState<TabId>('overview');
   const [f, setF] = useState<Filters>(EMPTY);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const openRow = openId ? data.rows.find((r) => r.id === openId) : undefined;
   const openTask = useCallback((r: TaskRow) => setOpenId(r.id), []);
   const closeTask = useCallback(() => setOpenId(null), []);
@@ -172,7 +174,12 @@ export function Dashboard({ data }: { data: DashboardData }) {
       <header className="head">
         <div className="head-row">
           <h1>LEDGERS.cloud Pulse</h1>
-          <RefreshButton generatedAt={data.generatedAt} />
+          <div className="head-actions">
+            <button className="btn primary" onClick={() => setCreating(true)}>
+              + New task
+            </button>
+            <RefreshButton generatedAt={data.generatedAt} />
+          </div>
         </div>
         <p className="take">
           {active > 0 && <>With these filters: </>}
@@ -211,7 +218,19 @@ export function Dashboard({ data }: { data: DashboardData }) {
         health follow Nifty Process SOP v2.0.
         <DigestTools />
       </footer>
-      {openRow && <TaskPanel row={openRow} options={data.options} onClose={closeTask} />}
+      {openRow && !creating && <TaskPanel row={openRow} options={data.options} onClose={closeTask} />}
+      {creating && (
+        <NewTask
+          options={data.options}
+          rows={data.rows}
+          today={data.today}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            setOpenId(id);
+          }}
+        />
+      )}
     </main>
     </OpenTask.Provider>
   );

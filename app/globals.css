@@ -284,3 +284,19 @@ textarea:focus-visible, .edit-form input:focus-visible, .edit-form select:focus-
 }
 
 .people-pick select { max-width: 220px; }
+
+/* New task */
+.head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edit-form textarea { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+.seg-ctl.kind { flex-wrap: wrap; }
+.seg-ctl button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.suggest b { color: var(--accent); font-weight: 600; }
+.dupes { font-size: 13px; padding: 10px 12px; border: 1px solid var(--bad); border-radius: 6px; background: var(--bg); }
+.dupes ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.sop-line { margin: -4px 0 0; }
+.more { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; }
+.more summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.more[open] summary { margin-bottom: 10px; }
+.sop-check { font-size: 13px; padding: 10px 12px; border-radius: 6px; border: 1px dashed var(--bad); }
+.sop-check.pass { border: 1px solid var(--ok); }
+.sop-check.pass b { color: var(--ok); }

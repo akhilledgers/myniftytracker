@@ -8,6 +8,7 @@ A one-page dashboard over the **LEDGERS.cloud** project in Nifty, so nobody has 
 - **People** — everyone with work: open, active, overdue, finished this week, last activity, and the task they last touched.
 - **Needs attention** — open tasks that are overdue or untouched for 30+ days.
 - **SOP health** — open tasks checked against *Nifty Process SOP v2.0*: SOP statuses only, list naming template, exactly 2 assignees with the Team Lead among them, and the §8.6 mandatory fields (start/due date, estimate, Planned Month, Planned/Unplanned, Task Type, Developer, Tester, Team Lead, priority) for every task past Pipeline.
+- **New task** — create a task in the SOP format. The task type (Bug, Enhancement, Feature, Tech debt) and priority are suggested from what you type, the description template follows the type, the Team Lead comes from the list, the two assignees are set per §8.4, and similar open tasks are shown first (§7). A task starting in 02 To Do needs every §8.6 field.
 - **Morning email** — every weekday around 9:30 IST: what became overdue, what is due today, who finished what, and each owner's numbers.
 
 Data is read from Nifty's v3 API on the server and cached for 5 minutes (a save refreshes it at once). The page reloads itself every 30 minutes. The token never reaches the browser.
@@ -36,6 +37,8 @@ Data is read from Nifty's v3 API on the server and cached for 5 minutes (a save 
 ## Editing
 
 Edits and comments go to Nifty through the server with `NIFTY_TOKEN`, so Nifty shows them as made by the token's owner. They need the `EDIT_KEY`: the first time you save, the dashboard asks for it and remembers it in that browser. Without `EDIT_KEY` set, the dashboard is read-only. Nifty has no bulk endpoint, so bulk edit updates tasks one by one, three at a time.
+
+New tasks need the same edit key and the `tasks:write` scope. The type suggestion is a set of word rules in `lib/newtask.ts` (no AI service, nothing leaves the server); on the team's own labelled tasks it agrees about 4 times in 5, so check it before creating.
 
 What can be edited: assignees, Team Lead, Developer, Tester, start and due dates, estimate, priority, task type, planned month, planned/unplanned. Status and completing tasks are left to Nifty.
 

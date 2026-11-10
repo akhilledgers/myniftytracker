@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { revalidatePath, revalidateTag } from 'next/cache';
 import { CUSTOM_FIELDS } from './config';
 import { CACHE_TAG, NiftyError } from './nifty';
+import { fullDescription, missingForSop, sopAssignees, type NewTaskInput } from './newtask';
 
 /** What the dashboard may change on a task. Every field is optional; only sent fields change. */
 export interface EditPatch {
@@ -77,6 +78,72 @@ export function toNiftyBody(p: EditPatch): Record<string, unknown> {
   return body;
 }
 
+function url(v: unknown, field: string): string {
+  if (v === undefined || v === null || v === '') return '';
+  if (typeof v !== 'string' || v.length > 1000 || !/^https?:\/\/\S+$/.test(v.trim())) throw new BadInput(`${field} must be a link starting with https://`);
+  return v.trim();
+}
+
+/** Checks a new task against the SOP and turns it into a Nifty POST /tasks body. */
+export function toCreateBody(raw: NewTaskInput, project: string, statusIds: { pipeline: string; todo: string }): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') throw new BadInput('Nothing to create');
+  const i: NewTaskInput = {
+    name: typeof raw.name === 'string' ? raw.name.trim().slice(0, 1024) : '',
+    description: typeof raw.description === 'string' ? raw.description.slice(0, 20000) : '',
+    listId: typeof raw.listId === 'string' && ID.test(raw.listId) ? raw.listId : '',
+    stage: raw.stage === 'todo' ? 'todo' : 'pipeline',
+    kind: text(raw.kind ?? '', 'Task type'),
+    priority: text(raw.priority ?? '', 'Priority'),
+    plannedMonth: text(raw.plannedMonth ?? '', 'Planned month'),
+    planned: text(raw.planned ?? '', 'Planned / Unplanned'),
+    lead: ids(raw.lead ?? [], 'Team lead').slice(0, 1),
+    developer: ids(raw.developer ?? [], 'Developer'),
+    tester: ids(raw.tester ?? [], 'Tester'),
+    subscribers: ids(raw.subscribers ?? [], 'Subscribers'),
+    start: raw.start || '',
+    due: raw.due || '',
+    estimateMin: raw.estimateMin ?? null,
+    country: /^(IN|AE|US|GL)$/.test(String(raw.country)) ? String(raw.country) : '',
+    designSpec: url(raw.designSpec, 'Design Spec'),
+    testCases: url(raw.testCases, 'Test Cases'),
+    testExecution: url(raw.testExecution, 'Test Execution Doc'),
+    dependencyId: typeof raw.dependencyId === 'string' && ID.test(raw.dependencyId) ? raw.dependencyId : '',
+  };
+  if (i.estimateMin !== null && (typeof i.estimateMin !== 'number' || !Number.isInteger(i.estimateMin) || i.estimateMin < 0 || i.estimateMin > 100000))
+    throw new BadInput('Estimate must be whole minutes');
+  const missing = missingForSop(i);
+  if (missing.length) throw new BadInput(`The SOP needs: ${missing.join(', ')}`);
+
+  const statusId = i.stage === 'todo' ? statusIds.todo : statusIds.pipeline;
+  const assignees = sopAssignees(i);
+  const body: Record<string, unknown> = {
+    name: i.name,
+    description: fullDescription(i) || null,
+    projectId: project,
+    listId: i.listId,
+    ...(statusId ? { statusId } : {}),
+    startAt: day(i.start, 'Start', '10:00:00'),
+    dueAt: day(i.due, 'Due', '19:00:00'),
+    estimate: i.estimateMin,
+    ...(assignees.length ? { assignees } : {}),
+    // §8.4: everyone else who needs to follow it is a subscriber, never a third assignee.
+    ...(i.subscribers.length ? { subscribers: i.subscribers.filter((s) => !assignees.includes(s)) } : {}),
+    ...(i.dependencyId ? { dependencyId: i.dependencyId } : {}),
+  };
+  const cf: { customFieldId: string; value: string }[] = [];
+  const put = (id: string, v: string) => v && cf.push({ customFieldId: id, value: v });
+  put(CUSTOM_FIELDS.taskType, i.kind);
+  put(CUSTOM_FIELDS.priority, i.priority);
+  put(CUSTOM_FIELDS.plannedMonth, i.plannedMonth);
+  put(CUSTOM_FIELDS.plannedUnplanned, i.planned);
+  put(CUSTOM_FIELDS.teamLead, i.lead.join(','));
+  put(CUSTOM_FIELDS.developer, i.developer.join(','));
+  put(CUSTOM_FIELDS.tester, i.tester.join(','));
+  if (i.country === 'IN' || i.country === 'AE') put(CUSTOM_FIELDS.country, i.country);
+  if (cf.length) body.customFields = cf;
+  return body;
+}
+
 /** Makes the next page load read Nifty again instead of the 5-minute cache. */
 export function refreshDashboard() {
   revalidateTag(CACHE_TAG, { expire: 0 });
@@ -93,7 +160,9 @@ export function errorResponse(err: unknown): Response {
           ? 'Nifty could not find this task.'
           : err.status === 409
             ? 'Someone changed this task at the same time. Reload and try again.'
-            : err.status === 429
+            : err.status === 400 || err.status === 422
+              ? `Nifty refused it: ${err.message.replace(/^.*?answered \d+: /, '').slice(0, 200)}`
+              : err.status === 429
               ? 'Nifty is rate-limiting. Wait a minute and try again.'
               : `Nifty refused the change (${err.status}).`;
     console.error(err);

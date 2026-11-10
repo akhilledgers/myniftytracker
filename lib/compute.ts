@@ -129,6 +129,10 @@ export interface EditOptions {
   taskType: string[];
   plannedMonth: string[];
   planned: string[];
+  /** Lists that follow the SOP naming template, for new tasks. */
+  lists: { id: string; name: string }[];
+  /** Status ids a new task can start in: 01 Pipeline and 02 To Do. */
+  newStatus: { pipeline: string; todo: string };
 }
 
 export interface DashboardData {
@@ -292,6 +296,14 @@ export function buildDashboard(
     taskType: choose(CUSTOM_FIELDS.taskType, seen.taskType),
     plannedMonth: choose(CUSTOM_FIELDS.plannedMonth, seen.plannedMonth),
     planned: choose(CUSTOM_FIELDS.plannedUnplanned, seen.planned),
+    lists: input.lists
+      .filter((l) => LIST_NAME_PATTERN.test(l.name))
+      .map((l) => ({ id: l.id, name: l.name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    newStatus: {
+      pipeline: input.statuses.find((s) => s.name === '01 Pipeline')?.id || '',
+      todo: input.statuses.find((s) => s.name === '02 To Do')?.id || '',
+    },
   };
 
   return { generatedAt: now.toISOString(), today, historyDays: HISTORY_DAYS, rows, options };
