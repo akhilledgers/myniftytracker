@@ -123,7 +123,8 @@ export function toCreateBody(raw: NewTaskInput, project: string, statusIds: { pi
     listId: i.listId,
     ...(statusId ? { statusId } : {}),
     startAt: day(i.start, 'Start', '10:00:00'),
-    dueAt: day(i.due, 'Due', '19:00:00'),
+    // Optional: the developer usually sets the due date later.
+    ...(i.due ? { dueAt: day(i.due, 'Due', '19:00:00') } : {}),
     // Optional: the developer usually adds the estimate later.
     ...(i.estimateMin ? { estimate: i.estimateMin } : {}),
     ...(assignees.length ? { assignees } : {}),

@@ -371,7 +371,7 @@ export function NewTask({
               <Field label="Start">
                 <input type="date" aria-label="Start date" value={start} onChange={(e) => setStart(e.target.value)} />
               </Field>
-              <Field label="Due">
+              <Field label="Due (optional)">
                 <input type="date" aria-label="Due date" value={due} min={start || undefined} onChange={(e) => setDue(e.target.value)} />
               </Field>
               <Field label="Estimate (hours, optional)">

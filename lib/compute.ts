@@ -59,7 +59,6 @@ export const RULES = [
   { id: 'leadAssigned', label: "Team Lead field isn't one of the assignees", short: 'Lead not assigned', scope: 'active' },
   { id: 'teamLead', label: 'No Team Lead field', short: 'No team lead', scope: 'active' },
   { id: 'start', label: 'No start date', short: 'No start date', scope: 'active' },
-  { id: 'due', label: 'No due date', short: 'No due date', scope: 'active' },
   { id: 'plannedMonth', label: 'No Planned Month', short: 'No planned month', scope: 'active' },
   { id: 'plannedUnplanned', label: 'No Planned / Unplanned', short: 'No planned/unplanned', scope: 'active' },
   { id: 'taskType', label: 'No Task Type', short: 'No task type', scope: 'active' },
@@ -234,7 +233,6 @@ export function buildDashboard(
         if (present(leadId) && !assigned.some((p) => p.id === leadId)) issues.push('leadAssigned');
         if (!present(leadId)) issues.push('teamLead');
         if (!t.startAt) issues.push('start');
-        if (!t.dueAt) issues.push('due');
         if (!present(cf.get(CUSTOM_FIELDS.plannedMonth))) issues.push('plannedMonth');
         if (!present(cf.get(CUSTOM_FIELDS.plannedUnplanned))) issues.push('plannedUnplanned');
         if (!present(cf.get(CUSTOM_FIELDS.taskType))) issues.push('taskType');
