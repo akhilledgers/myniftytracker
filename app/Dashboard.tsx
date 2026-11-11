@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { DashboardData, RuleId, Summary, TaskRow } from '@/lib/compute';
 import { RULES, isStuck, shortDate, summarize } from '@/lib/compute';
 import { BulkEdit } from './BulkEdit';
-import { NewTask } from './NewTask';
+import { CreatedPanel, NewTask, type JustCreated } from './NewTask';
 import { TaskPanel } from './TaskPanel';
 import { KeyBox, KeyProblem, getKey } from './edit-client';
 
@@ -111,7 +111,21 @@ export function Dashboard({ data }: { data: DashboardData }) {
   const [f, setF] = useState<Filters>(EMPTY);
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [fresh, setFresh] = useState<JustCreated | null>(null);
   const openRow = openId ? data.rows.find((r) => r.id === openId) : undefined;
+  const waitingForNew = !!openId && !openRow && fresh?.id === openId;
+  const refreshNow = useRouter().refresh;
+
+  // A just-created task can take a few seconds to show up in Nifty's list; keep asking until it does.
+  useEffect(() => {
+    if (!waitingForNew) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      if (++tries > 10) return clearInterval(t);
+      refreshNow();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [waitingForNew, refreshNow]);
   const openTask = useCallback((r: TaskRow) => setOpenId(r.id), []);
   const closeTask = useCallback(() => setOpenId(null), []);
 
@@ -219,14 +233,16 @@ export function Dashboard({ data }: { data: DashboardData }) {
         <DigestTools />
       </footer>
       {openRow && !creating && <TaskPanel row={openRow} options={data.options} onClose={closeTask} />}
+      {waitingForNew && fresh && !creating && <CreatedPanel made={fresh} onClose={closeTask} />}
       {creating && (
         <NewTask
           options={data.options}
           rows={data.rows}
           today={data.today}
           onClose={() => setCreating(false)}
-          onCreated={(id) => {
+          onCreated={(id, made) => {
             setCreating(false);
+            if (made) setFresh(made);
             setOpenId(id);
           }}
         />

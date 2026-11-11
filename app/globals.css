@@ -307,5 +307,3 @@ textarea:focus-visible, .edit-form input:focus-visible, .edit-form select:focus-
 .edit-form .field-row > select { min-width: 0; }
 .created { display: grid; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--accent-soft); }
 .created p { margin: 0; }
-.created-url { font-size: 13px; word-break: break-all; }
-.created .row-end { flex-wrap: wrap; }

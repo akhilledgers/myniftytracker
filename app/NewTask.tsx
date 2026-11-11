@@ -28,6 +28,8 @@ import { Choice, CopyLink, KeyBox, KeyProblem, PeoplePicker, getKey, send, toMin
 import { Field } from './TaskPanel';
 
 type Created = { ok: boolean; preview?: boolean; id?: string; key?: string; url?: string; sent?: unknown };
+/** A task this browser just created, shown straight away while the dashboard data catches up. */
+export type JustCreated = { id: string; key: string; url: string; name: string };
 
 export function NewTask({
   options,
@@ -40,7 +42,7 @@ export function NewTask({
   rows: TaskRow[];
   today: string;
   onClose: () => void;
-  onCreated: (id: string) => void;
+  onCreated: (id: string, made?: JustCreated) => void;
 }) {
   const router = useRouter();
   const panel = useRef<HTMLElement>(null);
@@ -69,7 +71,6 @@ export function NewTask({
   const [dependencyId, setDependencyId] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [made, setMade] = useState<{ id: string; key: string; url: string } | null>(null);
   const [needKey, setNeedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -208,8 +209,7 @@ export function NewTask({
         console.info('New task body', r.sent);
       } else if (r.id) {
         router.refresh();
-        // Stay on a "created" screen so the Nifty link can be copied straight away.
-        setMade({ id: r.id, key: r.key || '', url: r.url || '' });
+        onCreated(r.id, { id: r.id, key: r.key || '', url: r.url || '', name: input.name });
       }
     } catch (e) {
       if (e instanceof KeyProblem) setNeedKey(e.message);
@@ -235,35 +235,6 @@ export function NewTask({
           </div>
         </header>
 
-        {made ? (
-          <div className="drawer-body">
-            <div className="created" role="status">
-              <p>
-                <b>Created {made.key || 'the task'} in Nifty.</b> {name}
-              </p>
-              {/^https:\/\/nifty\.pm\//.test(made.url) && (
-                <p className="created-url">
-                  <a href={made.url} target="_blank" rel="noopener noreferrer">
-                    {made.url}
-                  </a>
-                </p>
-              )}
-              <div className="row-end">
-                {/^https:\/\/nifty\.pm\//.test(made.url) && (
-                  <>
-                    <CopyLink url={made.url} primary />
-                    <a className="btn" href={made.url} target="_blank" rel="noopener noreferrer">
-                      Open in Nifty ↗
-                    </a>
-                  </>
-                )}
-                <button className="btn" onClick={() => onCreated(made.id)}>
-                  View task here
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
         <div className="drawer-body">
           <div className="edit-form">
             <Field label="Task name" note="SOP §8.6: a clear and specific title.">
@@ -478,7 +449,46 @@ export function NewTask({
             </div>
           </div>
         </div>
-        )}
+      </aside>
+    </div>
+  );
+}
+
+/** Shown for a just-created task until the dashboard data has it, then the normal task panel takes over. */
+export function CreatedPanel({ made, onClose }: { made: JustCreated; onClose: () => void }) {
+  const linkOk = /^https:\/\/nifty\.pm\//.test(made.url);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`${made.key} ${made.name}`} tabIndex={-1}>
+        <header className="drawer-head">
+          <div>
+            <span className="key">{made.key}</span>
+            <h2>{made.name}</h2>
+          </div>
+          <div className="drawer-actions">
+            {linkOk && (
+              <>
+                <CopyLink url={made.url} label="Copy link" />
+                <a className="btn" href={made.url} target="_blank" rel="noopener noreferrer">
+                  Open in Nifty ↗
+                </a>
+              </>
+            )}
+            <button className="btn" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
+        </header>
+        <div className="drawer-body">
+          <p className="created" role="status">
+            <b>✓ Created in Nifty.</b> Loading the details…
+          </p>
+        </div>
       </aside>
     </div>
   );
