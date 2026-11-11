@@ -24,10 +24,10 @@ import {
   type NewTaskInput,
   type TaskKind,
 } from '@/lib/newtask';
-import { Choice, KeyBox, KeyProblem, PeoplePicker, getKey, send, toMinutes } from './edit-client';
+import { Choice, CopyLink, KeyBox, KeyProblem, PeoplePicker, getKey, send, toMinutes } from './edit-client';
 import { Field } from './TaskPanel';
 
-type Created = { ok: boolean; preview?: boolean; id?: string; key?: string; sent?: unknown };
+type Created = { ok: boolean; preview?: boolean; id?: string; key?: string; url?: string; sent?: unknown };
 
 export function NewTask({
   options,
@@ -69,6 +69,7 @@ export function NewTask({
   const [dependencyId, setDependencyId] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [made, setMade] = useState<{ id: string; key: string; url: string } | null>(null);
   const [needKey, setNeedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -207,7 +208,8 @@ export function NewTask({
         console.info('New task body', r.sent);
       } else if (r.id) {
         router.refresh();
-        onCreated(r.id);
+        // Stay on a "created" screen so the Nifty link can be copied straight away.
+        setMade({ id: r.id, key: r.key || '', url: r.url || '' });
       }
     } catch (e) {
       if (e instanceof KeyProblem) setNeedKey(e.message);
@@ -233,6 +235,35 @@ export function NewTask({
           </div>
         </header>
 
+        {made ? (
+          <div className="drawer-body">
+            <div className="created" role="status">
+              <p>
+                <b>Created {made.key || 'the task'} in Nifty.</b> {name}
+              </p>
+              {/^https:\/\/nifty\.pm\//.test(made.url) && (
+                <p className="created-url">
+                  <a href={made.url} target="_blank" rel="noopener noreferrer">
+                    {made.url}
+                  </a>
+                </p>
+              )}
+              <div className="row-end">
+                {/^https:\/\/nifty\.pm\//.test(made.url) && (
+                  <>
+                    <CopyLink url={made.url} primary />
+                    <a className="btn" href={made.url} target="_blank" rel="noopener noreferrer">
+                      Open in Nifty ↗
+                    </a>
+                  </>
+                )}
+                <button className="btn" onClick={() => onCreated(made.id)}>
+                  View task here
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
         <div className="drawer-body">
           <div className="edit-form">
             <Field label="Task name" note="SOP §8.6: a clear and specific title.">
@@ -447,6 +478,7 @@ export function NewTask({
             </div>
           </div>
         </div>
+        )}
       </aside>
     </div>
   );

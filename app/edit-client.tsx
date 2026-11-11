@@ -36,6 +36,35 @@ export async function send<T = { ok: boolean; preview?: boolean }>(url: string, 
   return j as T;
 }
 
+/** Copies a link to the clipboard and says so for two seconds. */
+export function CopyLink({ url, label = 'Copy Nifty link', primary }: { url: string; label?: string; primary?: boolean }) {
+  const [state, setState] = useState<'' | 'done' | 'fail'>('');
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setState('done');
+    } catch {
+      // Older browsers or blocked clipboard: fall back to a hidden text box.
+      const t = document.createElement('textarea');
+      t.value = url;
+      t.setAttribute('readonly', '');
+      t.style.position = 'fixed';
+      t.style.opacity = '0';
+      document.body.appendChild(t);
+      t.select();
+      const ok = document.execCommand('copy');
+      t.remove();
+      setState(ok ? 'done' : 'fail');
+    }
+    setTimeout(() => setState(''), 2000);
+  };
+  return (
+    <button type="button" className={`btn${primary ? ' primary' : ''}`} onClick={copy} title={url}>
+      <span aria-live="polite">{state === 'done' ? 'Copied ✓' : state === 'fail' ? 'Copy failed' : label}</span>
+    </button>
+  );
+}
+
 /** Asks for the edit key once per browser. */
 export function KeyBox({ error, onSet }: { error?: string; onSet: () => void }) {
   const [v, setV] = useState('');

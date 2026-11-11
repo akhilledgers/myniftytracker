@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { EditOptions, RuleId, TaskRow } from '@/lib/compute';
 import { RULES, shortDate } from '@/lib/compute';
 import type { TaskDetail } from './api/task/[id]/route';
-import { Choice, EditPatch, KeyBox, KeyProblem, PeoplePicker, getKey, send, toHours, toMinutes } from './edit-client';
+import { Choice, CopyLink, EditPatch, KeyBox, KeyProblem, PeoplePicker, getKey, send, toHours, toMinutes } from './edit-client';
 
 const RULE_SHORT = Object.fromEntries(RULES.map((r) => [r.id, r.short])) as Record<RuleId, string>;
 const when = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
@@ -78,9 +78,12 @@ export function TaskPanel({ row, options, onClose }: { row: TaskRow; options: Ed
           </div>
           <div className="drawer-actions">
             {/^https:\/\/nifty\.pm\//.test(row.url) && (
-              <a className="btn" href={row.url} target="_blank" rel="noopener noreferrer">
-                Open in Nifty ↗
-              </a>
+              <>
+                <CopyLink url={row.url} label="Copy link" />
+                <a className="btn" href={row.url} target="_blank" rel="noopener noreferrer">
+                  Open in Nifty ↗
+                </a>
+              </>
             )}
             <button className="btn" onClick={onClose} aria-label="Close">
               ✕
